@@ -284,24 +284,32 @@ public class KickBot : BaseBot<KickUser>
 
             // var livestreams = await BotUser.KickHttpClient.FindStreams(campaign);
             var livestreams = await BotUser.KickRepository.GetLivestreamCampaignsAsync(campaign);
+            // Highest-viewer stream first, so the loop below stops at the best
+            // candidate instead of whatever happens to be last in API order.
+            var orderedLivestreams = livestreams
+                .Where(l => l is not null)
+                .OrderByDescending(l => l.ViewerCount)
+                .ToList();
+
             Livestream? streamToWatch = null;
-            foreach (var livestream in livestreams)
+            for (var i = 0; i < orderedLivestreams.Count; i++)
             {
-                await Task.Delay(TimeSpan.FromSeconds(15));
-                
-                if (livestream is null)
+                // Only throttle between repeated authorization checks — no need
+                // to wait before the very first candidate.
+                if (i > 0)
                 {
-                    campaigns.Remove(campaign);
-                    continue;
+                    await Task.Delay(TimeSpan.FromSeconds(15));
                 }
 
+                var livestream = orderedLivestreams[i];
                 if (await BotUser.KickRepository.GetChannelAsync(livestream.Channel.slug) is null)
                 {
                     BotUser.Logger.LogInformation("You are not authorized to watch {channelName}, skipping", livestream.Channel.slug);
                     continue;
                 }
-                
+
                 streamToWatch = livestream;
+                break;
             }
 
             if (streamToWatch is null)

@@ -24,6 +24,12 @@ public class WatchRequest : ITwitchWatchManager
     private readonly TwitchGqlRepository twitchGraphQlClient;
     private DateTime lastRequestTime;
     private readonly bool enableOldSystem;
+    // Reused across every WatchStreamAsync call instead of `new HttpClient()`
+    // per call — this method fires roughly once a minute for the entire
+    // lifetime of a watch session, and a fresh HttpClient per call leaks
+    // handles/sockets over long-running processes (the well-documented .NET
+    // HttpClient-per-request anti-pattern).
+    private readonly HttpClient client;
 
     public WatchRequest(TwitchUser user, ILogger logger, bool enableOldSystem)
     {
@@ -34,6 +40,9 @@ public class WatchRequest : ITwitchWatchManager
         streamUrl = null;
 
         _logger = logger;
+
+        client = new HttpClient();
+        client.DefaultRequestHeaders.Add("Connection", "close");
     }
 
     /*
@@ -43,8 +52,6 @@ public class WatchRequest : ITwitchWatchManager
     public async Task WatchStreamAsync(User broadcaster, Game game)
     {
         DateTime requestTime = DateTime.Now;
-        HttpClient client = new HttpClient();
-        client.DefaultRequestHeaders.Add("Connection", "close");
 
         try
         {

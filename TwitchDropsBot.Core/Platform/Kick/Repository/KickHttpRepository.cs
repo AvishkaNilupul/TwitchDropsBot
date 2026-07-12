@@ -63,19 +63,12 @@ public class KickHttpRepository : BotRepository<KickUser>
         var campaigns = result.data;
         campaigns.RemoveAll(x => x.Status == "expired" || x.Status == "upcoming");
 
+        EnsureCategoryDefaults(campaigns);
+
         var favGamesSet = BotUser.FavouriteGames.Select(g => g.ToLower()).Distinct().ToHashSet();
 
         foreach (var campaign in campaigns)
         {
-            if (campaign.Category is null)
-            {
-                campaign.Category = new Category()
-                {
-                    Name = "KICK",
-                    IsFavorite = false
-                };
-            }
-            
             if (favGamesSet.Contains(campaign.Category.Name.ToLower()))
             {
                 campaign.Category.IsFavorite = true;
@@ -84,6 +77,22 @@ public class KickHttpRepository : BotRepository<KickUser>
 
         _logger.LogTrace("Retrieved {Count} active campaigns", campaigns.Count);
         return campaigns;
+    }
+
+    // Kick sometimes omits `category` on a campaign entirely; every endpoint
+    // that hands back Campaign objects needs this same fallback, or any code
+    // reading campaign.Category.* (ClaimDrop, CheckForClaim, notifications)
+    // NullReferenceExceptions.
+    private static void EnsureCategoryDefaults(IEnumerable<Campaign> campaigns)
+    {
+        foreach (var campaign in campaigns)
+        {
+            campaign.Category ??= new Category
+            {
+                Name = "KICK",
+                IsFavorite = false
+            };
+        }
     }
 
     public async Task ClaimDrop(Campaign campaign, Reward reward, CancellationToken cancellationToken = default)
@@ -160,6 +169,7 @@ public class KickHttpRepository : BotRepository<KickUser>
         );
 
         var inventory = result?.data ?? new List<Campaign>();
+        EnsureCategoryDefaults(inventory);
         _logger.LogTrace("Retrieved {Count} items in inventory", inventory.Count);
 
         return inventory;

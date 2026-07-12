@@ -28,6 +28,11 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
     private TwitchHttpService twitchHttpServiceGql;
     private readonly int requestLimit = 5;
     private ILogger _logger;
+    // Reused HTTP clients instead of `new HttpClient()` per call (SimulateWatchMobileAsync
+    // and ClaimDropAsync used to allocate a fresh one on every invocation — both are called
+    // repeatedly for the life of a bot session, which leaks handles/sockets over time).
+    private readonly HttpClient mobileHttpClient;
+    private readonly GraphQLHttpClient redeemGraphQLClient;
 
     public TwitchGqlRepository(TwitchUser twitchUser, ILogger logger, IOptionsMonitor<BotSettings> botSettings)
     {
@@ -43,6 +48,18 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
         graphQLClient =
             new GraphQLHttpClient("https://gql.twitch.tv/gql", new SystemTextJsonSerializer(),
                 twitchHttpServiceGql.HttpClient);
+
+        mobileHttpClient = new HttpClient();
+
+        var redeemHttpClient = new HttpClient();
+        foreach (var header in twitchHttpServiceGql.HttpClient.DefaultRequestHeaders)
+        {
+            redeemHttpClient.DefaultRequestHeaders.TryAddWithoutValidation(header.Key, header.Value);
+        }
+        redeemHttpClient.DefaultRequestHeaders.Add("client-session-id", clientSessionId);
+        redeemHttpClient.DefaultRequestHeaders.Add("x-device-id", BotUser.UniqueId);
+        redeemGraphQLClient =
+            new GraphQLHttpClient("https://gql.twitch.tv/gql", new SystemTextJsonSerializer(), redeemHttpClient);
 
         lock (_postmanLock)
         {
@@ -397,11 +414,9 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
     
     public async Task<dynamic?> SimulateWatchMobileAsync(string compressedData)
     {
-        var customHttpClient = new HttpClient();
-        
         var content = new StringContent(compressedData, System.Text.Encoding.UTF8, "text/plain");
 
-        var response = await customHttpClient.PostAsync("https://trowel.twitch.tv/track", content);
+        var response = await mobileHttpClient.PostAsync("https://trowel.twitch.tv/track", content);
         response.EnsureSuccessStatusCode();
 
         return null;
@@ -418,18 +433,6 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
                 dropInstanceID
             }
         };
-
-        var customHttpClient = new HttpClient();
-        foreach (var header in twitchHttpServiceGql.HttpClient.DefaultRequestHeaders)
-        {
-            customHttpClient.DefaultRequestHeaders.TryAddWithoutValidation(header.Key, header.Value);
-        }
-
-        customHttpClient.DefaultRequestHeaders.Add("client-session-id", clientSessionId);
-        customHttpClient.DefaultRequestHeaders.Add("x-device-id", BotUser.UniqueId);
-
-        var redeemGraphQLClient =
-            new GraphQLHttpClient("https://gql.twitch.tv/gql", new SystemTextJsonSerializer(), customHttpClient);
 
         dynamic? resp = await DoGQLRequestAsync(query, redeemGraphQLClient);
 
