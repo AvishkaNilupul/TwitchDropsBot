@@ -1,7 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using TwitchDropsBot.Core.Platform.Kick.Bot;
-using TwitchDropsBot.Core.Platform.Kick.Repository;
 using TwitchDropsBot.Core.Platform.Shared.Bots;
 using TwitchDropsBot.Core.Platform.Shared.Settings;
 using TwitchDropsBot.Core.Platform.Twitch.Bot;

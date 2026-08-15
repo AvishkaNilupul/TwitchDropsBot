@@ -784,6 +784,15 @@ public class TwitchBot : BaseBot<TwitchUser>
             return;
         }
 
+        // No-claim mode: farm drops to completion but leave them earned-but-unclaimed
+        // in the account's inventory, so the buyer can connect their own game account and
+        // claim them. See TwitchSettings.ClaimDrops.
+        if (!TwitchSettings.ClaimDrops)
+        {
+            Logger.LogInformation("ClaimDrops is disabled — skipping claim, leaving drops unclaimed for the buyer.");
+            return;
+        }
+
         // For every timebased drop, check if it is claimed
         foreach (var dropCampaignInProgress in inventory.DropCampaignsInProgress)
         {

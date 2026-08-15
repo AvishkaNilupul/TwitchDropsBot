@@ -3,8 +3,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Core;
-using TwitchDropsBot.Core.Platform.Kick.Bot;
-using TwitchDropsBot.Core.Platform.Kick.Settings;
 using TwitchDropsBot.Core.Platform.Shared.Serilog;
 using TwitchDropsBot.Core.Platform.Shared.Settings;
 using TwitchDropsBot.Core.Platform.Twitch.Bot;
@@ -58,11 +56,5 @@ public class UserFactory
 
         var logger = CreateLogger(typeof(TwitchUser).Name, settings);
         return ActivatorUtilities.CreateInstance<TwitchUser>(_serviceProvider, settings, logger);
-    }
-
-    public KickUser CreateKickUser(KickUserSettings settings)
-    {
-        var logger = CreateLogger(typeof(KickUser).Name, settings);
-        return ActivatorUtilities.CreateInstance<KickUser>(_serviceProvider, settings, logger);
     }
 }

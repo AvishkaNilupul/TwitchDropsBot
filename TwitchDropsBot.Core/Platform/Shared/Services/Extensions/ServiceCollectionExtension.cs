@@ -3,9 +3,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Serilog;
-using TwitchDropsBot.Core.Platform.Kick.Factories.Repositories;
-using TwitchDropsBot.Core.Platform.Kick.Factories.WatchManager;
-using TwitchDropsBot.Core.Platform.Kick.WatchManager;
 using TwitchDropsBot.Core.Platform.Shared.Factories.Bot;
 using TwitchDropsBot.Core.Platform.Shared.Factories.User;
 using TwitchDropsBot.Core.Platform.Shared.Settings;
@@ -30,14 +27,6 @@ public static class ServiceCollectionExtension
     {
         services.AddSingleton<ITwitchWatchManagerFactory, TwitchWatchManagerFactory>();
         services.AddSingleton<ITwitchRepositoryFactory, TwitchRepositoryFactory>();
-
-        return services;
-    }
-    
-    public static IServiceCollection AddKickService(this IServiceCollection services)
-    {
-        services.AddSingleton<IKickWatchManagerFactory, KickWatchManagerFactory>();
-        services.AddSingleton<IKickRepositoryFactory, KickRepositoryFactory>();
 
         return services;
     }

@@ -2,7 +2,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Serilog;
-using TwitchDropsBot.Core.Platform.Kick.WatchManager;
 using TwitchDropsBot.Core.Platform.Shared.Bots;
 using TwitchDropsBot.Core.Platform.Shared.Factories.Bot;
 using TwitchDropsBot.Core.Platform.Shared.Serilog;

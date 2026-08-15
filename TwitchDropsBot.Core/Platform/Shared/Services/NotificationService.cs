@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using Discord;
 using Discord.Webhook;
 using Microsoft.Extensions.Options;
-using TwitchDropsBot.Core.Platform.Kick.Bot;
 using TwitchDropsBot.Core.Platform.Shared.Bots;
 using TwitchDropsBot.Core.Platform.Shared.Settings;
 using TwitchDropsBot.Core.Platform.Twitch.Bot;
@@ -187,12 +186,6 @@ public class NotificationService
             return url;
         }
 
-        if (platformName == "Kick")
-        {
-            var trimmedUrl = url.TrimStart('/');
-            return $"https://ext.cdn.kick.com/{trimmedUrl}";
-        }
-
         // Try parsing as absolute, if not it's invalid
         if (!Uri.IsWellFormedUriString(url, UriKind.Absolute))
         {
@@ -205,7 +198,6 @@ public class NotificationService
     private (Color, string) GetPlatformData(BotUser user) => user switch
     {
         TwitchUser => (new Color(0xA970FF), "Twitch"),
-        KickUser   => (new Color(0x53FC18), "Kick"),
         _          => (new Color(0xFFFFFF), "Unknown")
     };
 

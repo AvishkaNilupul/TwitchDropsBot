@@ -1,6 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using TwitchDropsBot.Core.Platform.Kick.Bot;
 using TwitchDropsBot.Core.Platform.Shared.Services;
 using TwitchDropsBot.Core.Platform.Shared.Settings;
 using TwitchDropsBot.Core.Platform.Twitch.Bot;
@@ -21,11 +20,6 @@ public class BotFactory
 
     public TwitchBot CreateTwitchBot(TwitchUser user, ILogger logger)
     {
-        return new TwitchBot(user, logger, _notificationService, _botSettings); 
-    }
-
-    public KickBot CreateKickBot(KickUser user, ILogger logger)
-    {
-        return new KickBot(user, logger, _notificationService, _botSettings); 
+        return new TwitchBot(user, logger, _notificationService, _botSettings);
     }
 }
