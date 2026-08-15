@@ -50,8 +50,7 @@ namespace TwitchDropsBot.WinForms
             
             services.AddBotService();
             services.AddTwitchService();
-            services.AddKickService();
-            
+
             services.AddTransient<MainForm>();
 
 

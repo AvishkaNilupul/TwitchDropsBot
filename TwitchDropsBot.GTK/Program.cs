@@ -50,7 +50,6 @@ namespace TwitchDropsBot.GTK
             
             services.AddBotService();
             services.AddTwitchService();
-            services.AddKickService();
             services.AddTransient<MainWindow>();
 
 
