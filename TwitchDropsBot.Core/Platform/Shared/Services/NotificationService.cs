@@ -28,6 +28,10 @@ public class NotificationService
         _discordWebhookClient = string.IsNullOrEmpty(url) ? null : new DiscordWebhookClient(url);
     }
 
+    // False when no webhook is configured: every send is then a no-op, so
+    // callers can skip gathering data that only a notification would use.
+    public bool IsEnabled => _discordWebhookClient is not null;
+
     public async Task SendNotification(BotUser user, string gameName, string itemName, string itemImage, string? code = null)
     {
         var (color, platformName) = GetPlatformData(user);
