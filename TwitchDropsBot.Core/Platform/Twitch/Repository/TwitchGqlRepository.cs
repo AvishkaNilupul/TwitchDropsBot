@@ -14,6 +14,7 @@ using TwitchDropsBot.Core.Platform.Twitch.Models;
 using TwitchDropsBot.Core.Platform.Twitch.Models.Abstractions;
 using TwitchDropsBot.Core.Platform.Twitch.Services;
 using Constant = TwitchDropsBot.Core.Platform.Twitch.Utils.Constant;
+using TwitchJson = TwitchDropsBot.Core.Platform.Twitch.Utils.TwitchJson;
 
 namespace TwitchDropsBot.Core.Platform.Twitch.Repository;
 
@@ -46,7 +47,7 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
         _logger = logger;
 
         graphQLClient =
-            new GraphQLHttpClient("https://gql.twitch.tv/gql", new SystemTextJsonSerializer(),
+            new GraphQLHttpClient("https://gql.twitch.tv/gql", TwitchJson.CreateGraphQLSerializer(),
                 twitchHttpServiceGql.HttpClient);
 
         mobileHttpClient = new HttpClient();
@@ -59,7 +60,7 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
         redeemHttpClient.DefaultRequestHeaders.Add("client-session-id", clientSessionId);
         redeemHttpClient.DefaultRequestHeaders.Add("x-device-id", BotUser.UniqueId);
         redeemGraphQLClient =
-            new GraphQLHttpClient("https://gql.twitch.tv/gql", new SystemTextJsonSerializer(), redeemHttpClient);
+            new GraphQLHttpClient("https://gql.twitch.tv/gql", TwitchJson.CreateGraphQLSerializer(), redeemHttpClient);
 
         lock (_postmanLock)
         {
@@ -268,10 +269,7 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
         {
             if (item.GetProperty("data").GetProperty("user").ValueKind != JsonValueKind.Null)
             {
-                var options = new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                };
+                var options = TwitchJson.CreateOptions(propertyNameCaseInsensitive: true);
 
                 var user = JsonSerializer.Deserialize<User>(item.GetProperty("data").GetProperty("user").GetRawText(),
                     options);
@@ -340,12 +338,15 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
         }
 
         channelDropCampaignsProgress.RemoveAll(x =>
-            x.RewardGroups.All(x => x.ProgressCriteria.RequirementType == "SUBS"));
+            x.RewardGroups != null && x.RewardGroups.All(x => x.ProgressCriteria?.RequirementType == "SUBS"));
         
         foreach (var dropsCampaign in channelDropCampaignsProgress)
         {
-            foreach (var dropsCampaignRewardGroup in dropsCampaign.RewardGroups)
+            foreach (var dropsCampaignRewardGroup in dropsCampaign.RewardGroups ?? new List<DropsRewardGroup>())
             {
+                // A group Twitch returns without a self edge has no progress to
+                // normalise; skipping it keeps the rest of the campaign usable.
+                if (dropsCampaignRewardGroup?.Self == null) continue;
                 dropsCampaignRewardGroup.Self.CurrentMinutesWatched ??= 0;
                 dropsCampaignRewardGroup.Self.CurrentSubs ??= 0;
             }
@@ -556,6 +557,8 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
                 }
 
 
+                LogJsonAnomalies(name);
+
                 return graphQLResponse;
             }
             catch (System.Exception e)
@@ -611,6 +614,8 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
                     _logger.LogDebug(responseContent, "REQ", ConsoleColor.Blue);
                 }
 
+                LogJsonAnomalies(name);
+
                 return responseArray;
             }
             catch (System.Exception e)
@@ -629,6 +634,17 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
         }
 
         return null;
+    }
+
+    // Twitch changed a response shape and the tolerant serializer absorbed it
+    // (utils: TwitchJson). Logged once per process per anomaly, as a warning,
+    // so the change is visible without costing the query.
+    private void LogJsonAnomalies(string? queryName)
+    {
+        foreach (var anomaly in TwitchJson.DrainNewAnomalies())
+        {
+            _logger.LogWarning("Twitch response shape changed ({Query}): {Anomaly}", queryName, anomaly);
+        }
     }
 
     private string GenerateClientSessionId(string chars, int length)

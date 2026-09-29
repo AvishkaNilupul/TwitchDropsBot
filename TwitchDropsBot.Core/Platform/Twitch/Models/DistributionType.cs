@@ -6,4 +6,6 @@ public enum DistributionType
     BADGE,
     EMOTE,
     CODE,
+    // Any value Twitch sends that this build does not know (see TwitchJson).
+    UNKNOWN,
 }
