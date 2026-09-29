@@ -31,6 +31,7 @@ public class TwitchBot : BaseBot<TwitchUser>
     private List<AbstractCampaign> finishedCampaigns;
     private IOptionsMonitor<BotSettings> _botSettings;
     private List<string> _gamesToCheck;
+    private readonly Dictionary<string, DateTime> _failedRewardCodeModals = new();
 
     public TwitchBot(
         TwitchUser user,
@@ -307,7 +308,8 @@ public class TwitchBot : BaseBot<TwitchUser>
                         CurrentProgress = group.Self?.CurrentMinutesWatched ?? 0,
                         RequiredProgress = group.ProgressCriteria?.Requirements?.MinutesWatched ?? 0,
                         IsClaimed = group.Self?.Status == "CLAIMED",
-                        IsActive = group.Id == dropCurrentRewardGroup.Id
+                        IsActive = group.Id == dropCurrentRewardGroup.Id,
+                        ImageUrl = group.Rewards.FirstOrDefault()?.ThumbnailURL
                     });
                 }
             }
@@ -325,7 +327,8 @@ public class TwitchBot : BaseBot<TwitchUser>
                 CurrentProgress = dropCurrentRewardGroup.Self?.CurrentMinutesWatched ?? 0,
                 RequiredProgress = dropCurrentRewardGroup.ProgressCriteria?.Requirements?.MinutesWatched ?? 0,
                 IsClaimed = dropCurrentRewardGroup.Self?.Status == "CLAIMED",
-                IsActive = true
+                IsActive = true,
+                ImageUrl = dropCurrentRewardGroup.Rewards.FirstOrDefault()?.ThumbnailURL
             });
         }
         return list;
@@ -353,6 +356,9 @@ public class TwitchBot : BaseBot<TwitchUser>
         var previousMinuteWatched = 0;
         var minuteWatched = dropCurrentSession.CurrentMinutesWatched;
         var requiredMinutesToWatch = dropCurrentSession.RequiredMinutesWatched;
+
+        BotUser.CurrentMinutesWatched = minuteWatched;
+        BotUser.RequiredMinutesWatched = requiredMinutesToWatch;
 
         while (minuteWatched <
                (minutes ?? requiredMinutesToWatch) ||
@@ -385,6 +391,8 @@ public class TwitchBot : BaseBot<TwitchUser>
                 }
 
                 BotUser.CurrentDropCurrentSession = dropCurrentSession;
+                BotUser.CurrentMinutesWatched = dropCurrentSession.CurrentMinutesWatched;
+                BotUser.RequiredMinutesWatched = dropCurrentSession.RequiredMinutesWatched;
             }
             catch (System.Exception ex)
             {
@@ -406,7 +414,7 @@ public class TwitchBot : BaseBot<TwitchUser>
             {
                 BotUser.WatchManager.Close();
                 await BotUser.WatchManager.WatchStreamAsync(broadcaster, campaign.Game);
-                await Task.Delay(TimeSpan.FromSeconds(20));
+                await Task.Delay(TimeSpan.FromSeconds(20), BotUser.CancellationTokenSource?.Token ?? System.Threading.CancellationToken.None);
 
                 var newDropCurrentSession =
                     await BotUser.TwitchRepository.FetchCurrentSessionContextAsync(broadcaster);
@@ -453,7 +461,7 @@ public class TwitchBot : BaseBot<TwitchUser>
             Logger.LogInformation(
                 $"Waiting 20 seconds... {minuteWatched}/{requiredMinutesToWatch} minutes watched.");
 
-            await Task.Delay(TimeSpan.FromSeconds(20));
+            await Task.Delay(TimeSpan.FromSeconds(20), BotUser.CancellationTokenSource?.Token ?? System.Threading.CancellationToken.None);
         }
 
         BotUser.WatchManager.Close();
@@ -467,6 +475,9 @@ public class TwitchBot : BaseBot<TwitchUser>
         var previousMinuteWatched = 0;
         var minuteWatched = dropCurrentRewardGroup.Self.CurrentMinutesWatched;
         var requiredMinutesToWatch = dropCurrentRewardGroup.ProgressCriteria.Requirements.MinutesWatched;
+
+        BotUser.CurrentMinutesWatched = minuteWatched;
+        BotUser.RequiredMinutesWatched = requiredMinutesToWatch;
 
         if (minuteWatched.HasValue && requiredMinutesToWatch.HasValue)
         {
@@ -519,6 +530,8 @@ public class TwitchBot : BaseBot<TwitchUser>
             }
 
             minuteWatched = dropCurrentRewardGroup.Self.CurrentMinutesWatched;
+            BotUser.CurrentMinutesWatched = minuteWatched;
+            BotUser.RequiredMinutesWatched = dropCurrentRewardGroup.ProgressCriteria.Requirements.MinutesWatched;
 
             if (previousMinuteWatched == minuteWatched)
             {
@@ -533,7 +546,7 @@ public class TwitchBot : BaseBot<TwitchUser>
             {
                 BotUser.WatchManager.Close();
                 await BotUser.WatchManager.WatchStreamAsync(broadcaster, campaign.Game);
-                await Task.Delay(TimeSpan.FromSeconds(20));
+                await Task.Delay(TimeSpan.FromSeconds(20), BotUser.CancellationTokenSource?.Token ?? System.Threading.CancellationToken.None);
 
                 var newDropCurrentSession = await CheckDropProgress(broadcaster, campaign);
 
@@ -601,7 +614,7 @@ public class TwitchBot : BaseBot<TwitchUser>
                 );
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(60));
+            await Task.Delay(TimeSpan.FromSeconds(60), BotUser.CancellationTokenSource?.Token ?? System.Threading.CancellationToken.None);
         }
 
         BotUser.WatchManager.Close();
@@ -672,11 +685,16 @@ public class TwitchBot : BaseBot<TwitchUser>
             }
 
             // Todo: check if we got enough time
-            var firstTimeBasedDrops = campaign.TimeBasedDrops.FirstOrDefault();
-            if (firstTimeBasedDrops != null && campaign.EndAt.HasValue)
+            var inProgressCampaign = inventory?.DropCampaignsInProgress?.FirstOrDefault(x => x.Id == campaign.Id);
+            var activeDrop = inProgressCampaign?.TimeBasedDrops?.FirstOrDefault(x => (x.Self?.CurrentMinutesWatched ?? 0) < x.RequiredMinutesWatched) 
+                             ?? campaign.TimeBasedDrops.FirstOrDefault();
+
+            if (activeDrop != null && campaign.EndAt.HasValue)
             {
                 var minutesLeft = (campaign.EndAt.Value - DateTime.UtcNow).TotalMinutes;
-                if (minutesLeft < firstTimeBasedDrops.RequiredMinutesWatched)
+                var currentWatched = activeDrop.Self?.CurrentMinutesWatched ?? 0;
+                
+                if (minutesLeft < (activeDrop.RequiredMinutesWatched - currentWatched))
                 {
                     Logger.LogInformation("Not enough time to watch this campaign ({campaign.Name}), skipping",
                         campaign.Name);
@@ -807,17 +825,32 @@ public class TwitchBot : BaseBot<TwitchUser>
 
                 if (timeBasedDrop.Self.IsClaimed == false && timeBasedDrop.Self?.DropInstanceID != null)
                 {
-                    await BotUser.TwitchRepository.ClaimDropAsync(timeBasedDrop.Self.DropInstanceID);
-                    if (dropCampaignInProgress.Game?.Name != null && timeBasedDrop.Name is not null)
+                    try
                     {
-                        foreach (var benefitEdge in timeBasedDrop.BenefitEdges)
+                        var claimed = await BotUser.TwitchRepository.ClaimDropAsync(timeBasedDrop.Self.DropInstanceID);
+                        if (claimed)
                         {
-                            await NotificationService.SendNotification(BotUser, dropCampaignInProgress.Game.Name,
-                                benefitEdge.Benefit.Name, benefitEdge.Benefit.ImageAssetURL);
+                            timeBasedDrop.Self.IsClaimed = true;
+                            var isLastDrop = dropCampaignInProgress.TimeBasedDrops.All(d => d.Self?.IsClaimed == true);
+                            var gameName = dropCampaignInProgress.Game?.DisplayName ?? dropCampaignInProgress.Game?.Name ?? "Unknown Game";
+                            var itemName = timeBasedDrop.BenefitEdges.FirstOrDefault()?.Benefit.Name ?? timeBasedDrop.Name;
+                            var itemImage = timeBasedDrop.BenefitEdges.FirstOrDefault()?.Benefit.ImageAssetURL ?? dropCampaignInProgress.Game?.BoxArtUrl ?? string.Empty;
+                            var uniqueKey = $"twitch-{BotUser.Login}-{dropCampaignInProgress.Id}";
+                            await NotificationService.SendClaimNotification(BotUser, gameName, dropCampaignInProgress.Name, itemName, itemImage, uniqueKey, isLastDrop: isLastDrop);
                         }
                     }
-
-                    await Task.Delay(TimeSpan.FromSeconds(20));
+                    catch (Exception e)
+                    {
+                        var itemName = timeBasedDrop.BenefitEdges.FirstOrDefault()?.Benefit.Name ?? timeBasedDrop.Name;
+                        var itemImage = timeBasedDrop.BenefitEdges.FirstOrDefault()?.Benefit.ImageAssetURL ?? dropCampaignInProgress.Game?.BoxArtUrl ?? string.Empty;
+                        Logger.LogError(e, $"Failed to claim drop {itemName} for campaign {dropCampaignInProgress.Name}.");
+                        var message = $"Can't claim {itemName} for the campaign {dropCampaignInProgress.Name}. Twitch API error or account not linked.";
+                        await NotifyError("CLAIM ERROR", message, itemImage);
+                    }
+                    finally
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(20));
+                    }
                 }
             }
         }
@@ -826,17 +859,45 @@ public class TwitchBot : BaseBot<TwitchUser>
         
         foreach (var earnedDropRewardEdge in earnedDropRewardToClaim)
         {
+            var rewardId = earnedDropRewardEdge.Node.Id;
+            if (_failedRewardCodeModals.TryGetValue(rewardId, out var failedTime))
+            {
+                if (DateTime.UtcNow - failedTime < TimeSpan.FromHours(8))
+                {
+                    continue;
+                }
+                _failedRewardCodeModals.Remove(rewardId);
+            }
+
             if (earnedDropRewardEdge.Node.Item.DistributionType != DistributionType.CODE)
             {
                 continue;
             }
             
-            var rewardCampaignCode = await BotUser.TwitchRepository.RewardCodeModal(earnedDropRewardEdge.Node.Campaign.Id, earnedDropRewardEdge.Node.Id);
-            var message =
-                $"```{rewardCampaignCode.Value}``` has been rewarded for {earnedDropRewardEdge.Node.Item.Name}`";
-            await NotificationService.SendNotification(BotUser, message, earnedDropRewardEdge.Node.Item.ThumbnailURL,
-                new Uri(earnedDropRewardEdge.Node.Item.RedemptionURL));
-            await Task.Delay(TimeSpan.FromSeconds(5));
+            try
+            {
+                var rewardCampaignCode = await BotUser.TwitchRepository.RewardCodeModal(earnedDropRewardEdge.Node.Campaign.Id, rewardId);
+                Logger.LogInformation("Code {Code} rewarded for {ItemName}", rewardCampaignCode.Value, earnedDropRewardEdge.Node.Item.Name);
+
+                var gameName = earnedDropRewardEdge.Node.Campaign?.Game?.DisplayName ?? earnedDropRewardEdge.Node.Campaign?.Game?.Name ?? "Unknown Game";
+                var itemName = earnedDropRewardEdge.Node.Item?.Name ?? "Unknown Item";
+                var itemImage = earnedDropRewardEdge.Node.Item?.ThumbnailURL ?? earnedDropRewardEdge.Node.Campaign?.Game?.BoxArtUrl ?? string.Empty;
+                var uniqueKey = $"twitch-{BotUser.Login}-{earnedDropRewardEdge.Node.Campaign?.Id}";
+                await NotificationService.SendClaimNotification(BotUser, gameName, earnedDropRewardEdge.Node.Campaign?.Name ?? "Unknown Campaign", itemName, itemImage, uniqueKey, rewardCampaignCode.Value);
+            }
+            catch (Exception e)
+            {
+                _failedRewardCodeModals[rewardId] = DateTime.UtcNow;
+                var itemName = earnedDropRewardEdge.Node.Item?.Name ?? "Unknown Item";
+                var itemImage = earnedDropRewardEdge.Node.Item?.ThumbnailURL ?? earnedDropRewardEdge.Node.Campaign?.Game?.BoxArtUrl ?? string.Empty;
+                Logger.LogError(e, $"Failed to fetch reward code for {itemName}. Skipping for 8 hours.");
+                var message = $"Can't fetch reward code for {itemName}. Twitch API error. Claim skipped for 8 hours.";
+                await NotifyError("CLAIM ERROR", message, itemImage);
+            }
+            finally
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5));
+            }
         }
     }
 }
