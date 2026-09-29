@@ -309,7 +309,7 @@ public class TwitchBot : BaseBot<TwitchUser>
                         RequiredProgress = group.ProgressCriteria?.Requirements?.MinutesWatched ?? 0,
                         IsClaimed = group.Self?.Status == "CLAIMED",
                         IsActive = group.Id == dropCurrentRewardGroup.Id,
-                        ImageUrl = group.Rewards.FirstOrDefault()?.ThumbnailURL
+                        ImageUrl = group.Rewards?.FirstOrDefault()?.ThumbnailURL
                     });
                 }
             }
@@ -328,7 +328,7 @@ public class TwitchBot : BaseBot<TwitchUser>
                 RequiredProgress = dropCurrentRewardGroup.ProgressCriteria?.Requirements?.MinutesWatched ?? 0,
                 IsClaimed = dropCurrentRewardGroup.Self?.Status == "CLAIMED",
                 IsActive = true,
-                ImageUrl = dropCurrentRewardGroup.Rewards.FirstOrDefault()?.ThumbnailURL
+                ImageUrl = dropCurrentRewardGroup.Rewards?.FirstOrDefault()?.ThumbnailURL
             });
         }
         return list;
@@ -480,10 +480,12 @@ public class TwitchBot : BaseBot<TwitchUser>
         BotUser.CurrentMinutesWatched = minuteWatched;
         BotUser.RequiredMinutesWatched = requiredMinutesToWatch;
 
-        if (minuteWatched.HasValue && requiredMinutesToWatch.HasValue)
+        // The progress list is only used by the webhook notification; without a
+        // webhook it cost one extra DropChannelCampaignsProgress call per account.
+        if (NotificationService.IsEnabled && minuteWatched.HasValue && requiredMinutesToWatch.HasValue)
         {
             var uniqueKey = $"twitch-{BotUser.Login}-{campaign.Id}";
-            var itemImage = dropCurrentRewardGroup.Rewards.FirstOrDefault()?.ThumbnailURL ?? campaign.Game?.BoxArtUrl ?? string.Empty;
+            var itemImage = dropCurrentRewardGroup.Rewards?.FirstOrDefault()?.ThumbnailURL ?? campaign.Game?.BoxArtUrl ?? string.Empty;
             var dropsProgress = await GetTwitchProgressListAsync(broadcaster, campaign, dropCurrentRewardGroup);
             await NotificationService.SendOrUpdateProgressNotification(
                 BotUser,
@@ -600,10 +602,12 @@ public class TwitchBot : BaseBot<TwitchUser>
             Logger.LogInformation(
                 $"Waiting 60 seconds... {minuteWatched}/{requiredMinutesToWatch} minutes watched.");
 
-            if (requiredMinutesToWatch.HasValue)
+            // Webhook-only data: skip the extra progress query (one per account
+            // per minute) when no webhook is configured.
+            if (NotificationService.IsEnabled && requiredMinutesToWatch.HasValue)
             {
                 var uniqueKey = $"twitch-{BotUser.Login}-{campaign.Id}";
-                var itemImage = dropCurrentRewardGroup.Rewards.FirstOrDefault()?.ThumbnailURL ?? campaign.Game?.BoxArtUrl ?? string.Empty;
+                var itemImage = dropCurrentRewardGroup.Rewards?.FirstOrDefault()?.ThumbnailURL ?? campaign.Game?.BoxArtUrl ?? string.Empty;
                 var dropsProgress = await GetTwitchProgressListAsync(broadcaster, campaign, dropCurrentRewardGroup);
                 await NotificationService.SendOrUpdateProgressNotification(
                     BotUser,
