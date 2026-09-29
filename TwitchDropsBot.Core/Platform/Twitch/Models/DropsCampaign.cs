@@ -73,8 +73,8 @@ public class DropsProgressCriteria
     [JsonPropertyName("requirements")]
     public DropsUnlockRequirement Requirements { get; set; }
 
-    [JsonPropertyName("channels")]
-    public string Channels { get; set; }
+    // [JsonPropertyName("channels")]
+    // public string Channels { get; set; }
 
 }
 
