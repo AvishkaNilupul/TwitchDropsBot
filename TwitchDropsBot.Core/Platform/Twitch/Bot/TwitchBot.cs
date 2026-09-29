@@ -340,8 +340,9 @@ public class TwitchBot : BaseBot<TwitchUser>
         if (campaignProgress is null) return null;
 
         //Remove every drop where
-        var filteredCampaignProgress = campaignProgress.RewardGroups
-            .Where(x => x.Self != null && x.Self.CurrentMinutesWatched < x.ProgressCriteria.Requirements.MinutesWatched)
+        var filteredCampaignProgress = (campaignProgress.RewardGroups ?? new List<DropsRewardGroup>())
+            .Where(x => x.Self != null && x.ProgressCriteria?.Requirements != null &&
+                        x.Self.CurrentMinutesWatched < x.ProgressCriteria.Requirements.MinutesWatched)
             .OrderBy(x => x.ProgressCriteria.Requirements.MinutesWatched).ToList();
 
         return filteredCampaignProgress.FirstOrDefault();
@@ -803,9 +804,9 @@ public class TwitchBot : BaseBot<TwitchUser>
         }
 
         // For every timebased drop, check if it is claimed
-        foreach (var dropCampaignInProgress in inventory.DropCampaignsInProgress)
+        foreach (var dropCampaignInProgress in inventory.DropCampaignsInProgress ?? new List<DropCampaign>())
         {
-            foreach (var timeBasedDrop in dropCampaignInProgress.TimeBasedDrops)
+            foreach (var timeBasedDrop in dropCampaignInProgress.TimeBasedDrops ?? new List<TimeBasedDrop>())
             {
                 if (timeBasedDrop.Self is null)
                 {
@@ -846,7 +847,10 @@ public class TwitchBot : BaseBot<TwitchUser>
             }
         }
 
-        var earnedDropRewardToClaim = inventory.EarnedDropRewards.Edges.Where(x => x.Node.Status != "CLAIMED").ToList();
+        // Null-safe: a response without earnedDropRewards must not fail the whole
+        // cycle (an exception here would stop the account before it ever watches).
+        var earnedDropRewardToClaim = (inventory.EarnedDropRewards?.Edges ?? new List<EarnedDropRewardEdge>())
+            .Where(x => x?.Node?.Item != null && x.Node.Status != "CLAIMED").ToList();
         
         foreach (var earnedDropRewardEdge in earnedDropRewardToClaim)
         {

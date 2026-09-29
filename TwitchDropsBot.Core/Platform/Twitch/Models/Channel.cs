@@ -86,4 +86,6 @@ public enum EmoteType
     SMILIES,
     PRIME,
     TURBO,
+    // Any value Twitch sends that this build does not know (see TwitchJson).
+    UNKNOWN,
 }
