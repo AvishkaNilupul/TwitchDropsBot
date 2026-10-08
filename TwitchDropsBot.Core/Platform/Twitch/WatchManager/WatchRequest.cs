@@ -31,6 +31,26 @@ public class WatchRequest : ITwitchWatchManager
     // HttpClient-per-request anti-pattern).
     private readonly HttpClient client;
 
+    // --- Stream segment requests -------------------------------------------
+    // Since 2026-10-07 ~21:30Z Twitch only credits Drops watch time to a
+    // viewer that actually requests the stream's media segments; the
+    // minute-watched event alone stopped counting (measured across our bots:
+    // ~98% of watched minutes credited before, ~1% after, while accounts that
+    // request every new segment earn one minute per minute again). So while a
+    // channel is being watched, a background loop reads the lowest-quality
+    // playlist and sends a HEAD for each new segment. No audio or video is
+    // downloaded.
+    private const int SegmentPollSeconds = 10;
+    // The loop only runs while WatchStreamAsync keeps being called: if the
+    // account's watch loop dies without calling Close(), it stops by itself.
+    private const int SegmentLeaseSeconds = 180;
+    private const int SegmentMemory = 256;
+    private static readonly HttpClient hlsClient = CreateHlsClient();
+    private CancellationTokenSource? segmentCts;
+    private Task? segmentTask;
+    private string? segmentChannel;
+    private long segmentLeaseTicks;
+
     public WatchRequest(TwitchUser user, ILogger logger, bool enableOldSystem)
     {
         BotUser = user;
@@ -55,6 +75,8 @@ public class WatchRequest : ITwitchWatchManager
 
         try
         {
+            EnsureSegmentWatch(broadcaster);
+
             if (enableOldSystem)
             {
                 if (streamUrl == null)
@@ -169,8 +191,264 @@ public class WatchRequest : ITwitchWatchManager
 
     public void Close()
     {
+        StopSegmentWatch();
         streamUrl = null;
         lastRequestTime = DateTime.MinValue;
+    }
+
+    private static HttpClient CreateHlsClient()
+    {
+        var handler = new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            PooledConnectionIdleTimeout = TimeSpan.FromSeconds(60),
+            EnableMultipleHttp2Connections = true,
+        };
+        var hls = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(8),
+            DefaultRequestVersion = System.Net.HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
+        };
+        hls.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", Constant.TwitchDevice.UserAgents[0]);
+        return hls;
+    }
+
+    private void EnsureSegmentWatch(User broadcaster)
+    {
+        Interlocked.Exchange(ref segmentLeaseTicks, DateTime.UtcNow.AddSeconds(SegmentLeaseSeconds).Ticks);
+
+        if (string.IsNullOrEmpty(broadcaster.Login))
+        {
+            return;
+        }
+
+        if (segmentTask is { IsCompleted: false } && segmentChannel == broadcaster.Login)
+        {
+            return;
+        }
+
+        StopSegmentWatch();
+
+        var login = broadcaster.Login;
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(
+            BotUser.CancellationTokenSource?.Token ?? CancellationToken.None);
+        segmentChannel = login;
+        segmentCts = cts;
+        segmentTask = Task.Run(() => SegmentLoopAsync(login, cts.Token));
+    }
+
+    private void StopSegmentWatch()
+    {
+        var cts = segmentCts;
+        segmentCts = null;
+        segmentTask = null;
+        segmentChannel = null;
+
+        if (cts is null)
+        {
+            return;
+        }
+
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private async Task SegmentLoopAsync(string login, CancellationToken ct)
+    {
+        string? playlistUrl = null;
+        var seen = new HashSet<string>();
+        var seenOrder = new Queue<string>();
+        var failures = 0;
+
+        _logger.LogDebug("Requesting the stream segments of {login} so the watch time counts.", login);
+
+        try
+        {
+            while (!ct.IsCancellationRequested &&
+                   DateTime.UtcNow.Ticks < Interlocked.Read(ref segmentLeaseTicks))
+            {
+                var started = DateTime.UtcNow;
+                var ok = false;
+
+                try
+                {
+                    // One poll never outlives its slot, whatever a request does.
+                    using var poll = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    poll.CancelAfter(TimeSpan.FromSeconds(SegmentPollSeconds + 5));
+
+                    playlistUrl ??= await FetchPlaylistUrlAsync(login, poll.Token);
+
+                    if (playlistUrl is not null)
+                    {
+                        ok = await RequestNewSegmentsAsync(playlistUrl, seen, seenOrder, poll.Token);
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (System.Exception ex)
+                {
+                    _logger.LogDebug("Stream segment request for {login} failed: {message}", login, ex.Message);
+                }
+
+                if (ok)
+                {
+                    failures = 0;
+                }
+                else
+                {
+                    failures++;
+
+                    // The playlist address is signed and expires; ask for a new one.
+                    if (failures % 3 == 0)
+                    {
+                        playlistUrl = null;
+                    }
+
+                    if (failures == 6)
+                    {
+                        _logger.LogWarning(
+                            "Could not request the stream segments of {login} for a minute, watch time may not count.",
+                            login);
+                    }
+                }
+
+                var wait = TimeSpan.FromSeconds(SegmentPollSeconds) - (DateTime.UtcNow - started);
+                if (wait < TimeSpan.FromSeconds(1))
+                {
+                    wait = TimeSpan.FromSeconds(1);
+                }
+
+                await Task.Delay(wait, ct);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task<string?> FetchPlaylistUrlAsync(string login, CancellationToken ct)
+    {
+        PlaybackAccessToken? token = await twitchGraphQlClient.FetchPlaybackAccessTokenAsync(login);
+
+        if (string.IsNullOrEmpty(token?.Signature) || string.IsNullOrEmpty(token?.Value))
+        {
+            return null;
+        }
+
+        var masterUrl =
+            $"https://usher.ttvnw.net/api/channel/hls/{login}.m3u8?sig={Uri.EscapeDataString(token.Signature)}" +
+            $"&token={Uri.EscapeDataString(token.Value)}&allow_source=true&allow_audio_only=true";
+
+        using var response = await hlsClient.GetAsync(masterUrl, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var qualities = PlaylistUris(await response.Content.ReadAsStringAsync(ct), masterUrl, "#EXT-X-STREAM-INF:");
+
+        // The last quality is the lightest one (audio only, or the lowest bitrate).
+        return qualities.LastOrDefault();
+    }
+
+    // True when the playlist was read and every segment in it has been requested.
+    private static async Task<bool> RequestNewSegmentsAsync(string playlistUrl, HashSet<string> seen,
+        Queue<string> seenOrder, CancellationToken ct)
+    {
+        using var response = await hlsClient.GetAsync(playlistUrl, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return false;
+        }
+
+        var segments = PlaylistUris(await response.Content.ReadAsStringAsync(ct), playlistUrl, "#EXTINF:");
+
+        if (segments.Count == 0)
+        {
+            return false;
+        }
+
+        var ok = true;
+
+        foreach (var segment in segments)
+        {
+            if (seen.Contains(segment))
+            {
+                continue;
+            }
+
+            using var request = new HttpRequestMessage(HttpMethod.Head, segment);
+            using var head = await hlsClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            if (!head.IsSuccessStatusCode)
+            {
+                ok = false;
+                continue;
+            }
+
+            seen.Add(segment);
+            seenOrder.Enqueue(segment);
+
+            if (seenOrder.Count > SegmentMemory)
+            {
+                seen.Remove(seenOrder.Dequeue());
+            }
+        }
+
+        return ok;
+    }
+
+    // The address lines of an HLS playlist that follow the given tag
+    // (#EXT-X-STREAM-INF = qualities of a master playlist, #EXTINF = segments).
+    internal static List<string> PlaylistUris(string playlist, string baseUrl, string tag)
+    {
+        var uris = new List<string>();
+        var pending = false;
+
+        foreach (var raw in playlist.Split('\n'))
+        {
+            var line = raw.Trim();
+
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            if (line.StartsWith('#'))
+            {
+                if (line.StartsWith(tag, StringComparison.Ordinal))
+                {
+                    pending = true;
+                }
+
+                continue;
+            }
+
+            if (!pending)
+            {
+                continue;
+            }
+
+            pending = false;
+
+            if (Uri.TryCreate(new Uri(baseUrl), line, out var uri) &&
+                (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp))
+            {
+                uris.Add(uri.AbsoluteUri);
+            }
+        }
+
+        return uris;
     }
 
     private string GetPayload(User broadcaster, Stream stream, Game game, bool onlyB64 = false)
