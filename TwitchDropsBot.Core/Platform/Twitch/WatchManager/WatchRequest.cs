@@ -40,7 +40,10 @@ public class WatchRequest : ITwitchWatchManager
     // channel is being watched, a background loop reads the lowest-quality
     // playlist and sends a HEAD for each new segment. No audio or video is
     // downloaded.
-    private const int SegmentPollSeconds = 10;
+    // The playlist holds the last ~30 s of segments (15 x 2 s). Reading it
+    // every 10, 20 or 30 s was credited alike; 15 s halves the playlist
+    // traffic of a 10 s poll and still leaves room for a slow request.
+    private const int SegmentPollSeconds = 15;
     // The loop only runs while WatchStreamAsync keeps being called: if the
     // account's watch loop dies without calling Close(), it stops by itself.
     private const int SegmentLeaseSeconds = 180;
@@ -203,6 +206,7 @@ public class WatchRequest : ITwitchWatchManager
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
             PooledConnectionIdleTimeout = TimeSpan.FromSeconds(60),
             EnableMultipleHttp2Connections = true,
+            AutomaticDecompression = System.Net.DecompressionMethods.All,
         };
         var hls = new HttpClient(handler)
         {
