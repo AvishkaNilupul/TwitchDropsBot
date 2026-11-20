@@ -14,5 +14,10 @@ public class TwitchSettings
     // The drop is left as earned-but-unclaimed in the account's inventory so the buyer
     // can connect their own game account and claim it themselves. Default true = upstream behaviour.
     public bool ClaimDrops { get; set; } = true;
+    public List<RewardCampaignTarget> RewardCampaignTargets { get; set; } = new();
+    public bool CollectRewardCodes { get; set; } = false;
+    public bool RewardCampaignsOnly { get; set; } = false;
+    public string RewardCodeDirectory { get; set; } = "reward-codes";
+    public string RewardCodeKeyFile { get; set; } = "";
     public string WatchManager { get; set; } = WatchManagerType.WatchRequest;
 }

@@ -4,6 +4,8 @@ namespace TwitchDropsBot.Core.Platform.Twitch.Models;
 
 public class Inventory
 {
+    [JsonPropertyName("rewardValue")]
+    public RewardCampaignCode? RewardValue { get; set; }
     [JsonPropertyName("dropCampaignsInProgress")]
     public List<DropCampaign> DropCampaignsInProgress { get; set; } = new List<DropCampaign>();
 

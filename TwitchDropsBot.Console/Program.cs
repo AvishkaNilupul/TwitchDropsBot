@@ -12,6 +12,9 @@ using TwitchDropsBot.Core.Platform.Shared.Helpers;
 using TwitchDropsBot.Core.Platform.Shared.Services.Extensions;
 using TwitchDropsBot.Core.Platform.Shared.Settings;
 
+if (args.Length > 0 && args[0] == "reward-codes")
+    return RewardCodesCommand.Run(args);
+
 var builder = new ConfigurationBuilder()
     .AddJsonFile("appsettings.json", false, true)
     .AddJsonFile("appsettings.Development.json", true, true);
@@ -65,3 +68,4 @@ var start = new Start(
 );
 
 await start.StartAsync();
+return 0;

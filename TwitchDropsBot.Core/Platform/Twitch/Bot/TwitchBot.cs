@@ -12,7 +12,7 @@ using TwitchDropsBot.Core.Platform.Twitch.Utils;
 
 namespace TwitchDropsBot.Core.Platform.Twitch.Bot;
 
-public class TwitchBot : BaseBot<TwitchUser>
+public partial class TwitchBot : BaseBot<TwitchUser>
 {
     // Only way for now to get refresh settings for each run
     private TwitchSettings TwitchSettings
@@ -81,6 +81,11 @@ public class TwitchBot : BaseBot<TwitchUser>
         BotUser.Status = BotStatus.Seeking;
 
         await CheckForClaim(inventory);
+
+        if (await TryWatchRewardCampaignAsync(thingsToWatch.OfType<RewardCampaign>()))
+            return;
+        if (TwitchSettings.RewardCampaignsOnly)
+            throw new NoBroadcasterOrNoCampaignLeft();
 
         if (thingsToWatch.Count == 0)
         {
@@ -282,7 +287,7 @@ public class TwitchBot : BaseBot<TwitchUser>
     {
         try
         {
-            var campaignsProgress = await BotUser.TwitchRepository.FetchDropCampaignsProgressAsync(broadcaster);
+            var campaignsProgress = await BotUser.TwitchRepository.FetchDropCampaignsProgressAsync(broadcaster, campaign is RewardCampaign);
             return campaignsProgress.FirstOrDefault(x => x.Id == campaign.Id);
         }
         catch (Exception ex)
@@ -807,6 +812,9 @@ public class TwitchBot : BaseBot<TwitchUser>
             return;
         }
 
+        if (TwitchSettings.CollectRewardCodes)
+            await CollectRewardCodesAsync(inventory);
+
         // No-claim mode: farm drops to completion but leave them earned-but-unclaimed
         // in the account's inventory, so the buyer can connect their own game account and
         // claim them. See TwitchSettings.ClaimDrops.
@@ -867,6 +875,8 @@ public class TwitchBot : BaseBot<TwitchUser>
         
         foreach (var earnedDropRewardEdge in earnedDropRewardToClaim)
         {
+            // The independent collector already persists these without webhook disclosure.
+            if (TwitchSettings.CollectRewardCodes) continue;
             var rewardId = earnedDropRewardEdge.Node.Id;
             if (_failedRewardCodeModals.TryGetValue(rewardId, out var failedTime))
             {

@@ -80,14 +80,25 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
         {
             List<AbstractCampaign> campaigns = new List<AbstractCampaign>();
             List<DropCampaign> dropCampaigns = resp.Data.CurrentUser.DropCampaigns ?? new List<DropCampaign>();
-            List<RewardCampaign> rewardCampaigns = resp.Data.RewardCampaignsAvailableToUser;
+            List<RewardCampaign> rewardCampaigns = resp.Data.RewardCampaignsAvailableToUser ?? new List<RewardCampaign>();
 
             dropCampaigns = dropCampaigns.FindAll(dropCampaign => dropCampaign is { Status: "ACTIVE" });
+            // Only an explicit operator target can supply missing game metadata.
+            // Site-wide campaigns must never be assigned an arbitrary category.
+            foreach (var campaign in rewardCampaigns)
+            {
+                var target = config.TwitchSettings.RewardCampaignTargets?
+                    .FirstOrDefault(x => x.IsValid && x.CampaignId == campaign.Id);
+                if (target != null && campaign.Game == null)
+                    campaign.Game = new Game { Id = target.GameId, Name = target.GameName,
+                        DisplayName = target.GameName, Slug = target.GameSlug };
+            }
             rewardCampaigns.RemoveAll(campaign => campaign.Game == null);
 
             //Select only campaigns with minute watched goal
             rewardCampaigns =
-                rewardCampaigns.FindAll(rewardCampaign => rewardCampaign.UnlockRequirements?.MinuteWatchedGoal != 0);
+                rewardCampaigns.FindAll(c => (c.UnlockRequirements?.MinuteWatchedGoal ?? 0) > 0 ||
+                    config.TwitchSettings.RewardCampaignTargets?.Any(t => t.IsValid && t.CampaignId == c.Id) == true);
 
             var noGames = dropCampaigns.FindAll(x => x.Game is null);
             _logger.LogInformation("{noGames.Count} campaign with no game bind to it", noGames.Count);
@@ -319,7 +330,7 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
         return resp?.Data.CurrentUser.DropCurrentSession;
     }
 
-    public async Task<List<DropsCampaign>> FetchDropCampaignsProgressAsync(User channel)
+    public async Task<List<DropsCampaign>> FetchDropCampaignsProgressAsync(User channel, bool preserveUnknownProgress = false)
     {
         var query = CreateQuery("DropChannelCampaignsProgress");
         
@@ -347,7 +358,7 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
                 // A group Twitch returns without a self edge has no progress to
                 // normalise; skipping it keeps the rest of the campaign usable.
                 if (dropsCampaignRewardGroup?.Self == null) continue;
-                dropsCampaignRewardGroup.Self.CurrentMinutesWatched ??= 0;
+                if (!preserveUnknownProgress) dropsCampaignRewardGroup.Self.CurrentMinutesWatched ??= 0;
                 dropsCampaignRewardGroup.Self.CurrentSubs ??= 0;
             }
         }
@@ -449,7 +460,7 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
             variables["rewardID"] = rewardId;
         }
 
-        dynamic? resp = await DoGQLRequestAsync(query);
+        dynamic? resp = await DoGQLRequestAsync(query, sensitiveResponse: true);
 
         RewardCampaignCode rewardCampaignCode = resp.Data.CurrentUser.Inventory.RewardValue;
 
@@ -520,7 +531,7 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
     }
 
     private async Task<dynamic?> DoGQLRequestAsync(GraphQLRequest query, GraphQLHttpClient? client = null,
-        string? name = null)
+        string? name = null, bool sensitiveResponse = false)
     {
         var avoidPrint = new List<string> { "Inventory", "ViewerDropsDashboard", "DirectoryPage_Game" };
 
@@ -536,7 +547,7 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
                 if (graphQLResponse.Errors != null)
                 {
                     _logger.LogDebug($"Failed to execute the query {name}");
-                    foreach (var error in graphQLResponse.Errors)
+                    foreach (var error in graphQLResponse.Errors.Where(_ => !sensitiveResponse))
                     {
                         _logger.LogDebug(error.Message);
                     }
@@ -550,14 +561,13 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
                     WriteIndented = false
                 };
                 var json = JsonSerializer.Serialize(graphQLResponse.Data, options);
-                if (config.LogLevel > 0)
+                if (config.LogLevel > 0 && !sensitiveResponse)
                 {
-                    _logger.LogDebug(name, "REQ", ConsoleColor.Blue);
-                    _logger.LogDebug(json, "REQ", ConsoleColor.Blue);
+                    _logger.LogDebug("{Operation} response: {Response}", name, json);
                 }
 
 
-                LogJsonAnomalies(name);
+                if (!sensitiveResponse) LogJsonAnomalies(name);
 
                 return graphQLResponse;
             }
@@ -568,7 +578,10 @@ public class TwitchGqlRepository : BotRepository<TwitchUser>
                     throw new System.Exception($"Failed to execute the query {name} (attempt {i + 1}/{requestLimit}).");
                 }
 
-                _logger.LogError(e, $"Failed to execute the query {name} (attempt {i + 1}/{requestLimit}).");
+                if (sensitiveResponse)
+                    _logger.LogError("Failed to execute sensitive query {Query} (attempt {Attempt}/{Limit}).", name, i + 1, requestLimit);
+                else
+                    _logger.LogError(e, $"Failed to execute the query {name} (attempt {i + 1}/{requestLimit}).");
 
                 await Task.Delay(TimeSpan.FromSeconds(5));
             }

@@ -365,3 +365,5 @@ MigrationBackup/
 FodyWeavers.xsd
 publish-local-repository.bat
 /publish-local-repository.sh
+/reward-codes/
+**/reward-code.key

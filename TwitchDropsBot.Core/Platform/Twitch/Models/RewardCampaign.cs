@@ -7,6 +7,8 @@ namespace TwitchDropsBot.Core.Platform.Twitch.Models;
 
 public partial class RewardCampaign : AbstractCampaign
 {
+    [JsonPropertyName("startsAt")]
+    public DateTime? StartsAt { get; set; }
     // [JsonPropertyName("id")]
     // public string? Id { get; set; }
 
